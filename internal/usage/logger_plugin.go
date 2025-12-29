@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ var statisticsEnabled atomic.Bool
 
 // statsFileName defines the location of the stats file.
 const statsFileName = "usage_stats.json"
+const maxRequestDetails = 500
 
 func init() {
 	statisticsEnabled.Store(true)
@@ -248,6 +250,7 @@ func (s *RequestStatistics) updateAPIStats(stats *apiStats, model string, detail
 	modelStatsValue.TotalRequests++
 	modelStatsValue.TotalTokens += detail.Tokens.TotalTokens
 	modelStatsValue.Details = append(modelStatsValue.Details, detail)
+	modelStatsValue.Details = trimRequestDetails(modelStatsValue.Details)
 }
 
 // Snapshot returns a copy of the aggregated metrics for external consumption.
@@ -392,6 +395,11 @@ func (s *RequestStatistics) recordImported(apiName, modelName string, stats *api
 	s.totalTokens += totalTokens
 
 	s.updateAPIStats(stats, modelName, detail)
+	if stats != nil && stats.Models != nil {
+		if modelStatsValue, ok := stats.Models[modelName]; ok && modelStatsValue != nil {
+			modelStatsValue.Details = trimRequestDetails(modelStatsValue.Details)
+		}
+	}
 
 	dayKey := detail.Timestamp.Format("2006-01-02")
 	hourKey := detail.Timestamp.Hour()
@@ -425,13 +433,11 @@ func dedupKey(apiName, modelName string, detail RequestDetail) string {
 func (s *RequestStatistics) Save(filename string) error {
 	snapshot := s.Snapshot()
 
-	// OPTIMIZATION: Clear the 'Details' slice from the snapshot before saving.
-	// This prevents the JSON file from growing indefinitely while preserving
-	// accurate counters (TotalRequests, TotalTokens) and Trends (ByDay, ByHour)
-	// which are stored separately.
+	// OPTIMIZATION: Trim the 'Details' slice from the snapshot before saving.
+	// This keeps the JSON file bounded while preserving recent request context.
 	for apiKey, apiSnap := range snapshot.APIs {
 		for modelName, modelSnap := range apiSnap.Models {
-			modelSnap.Details = nil
+			modelSnap.Details = trimRequestDetails(modelSnap.Details)
 			apiSnap.Models[modelName] = modelSnap
 		}
 		snapshot.APIs[apiKey] = apiSnap
@@ -578,6 +584,19 @@ func normaliseTokenStats(tokens TokenStats) TokenStats {
 		tokens.TotalTokens = tokens.InputTokens + tokens.OutputTokens + tokens.ReasoningTokens + tokens.CachedTokens
 	}
 	return tokens
+}
+
+func trimRequestDetails(details []RequestDetail) []RequestDetail {
+	if len(details) <= maxRequestDetails {
+		return details
+	}
+	sort.Slice(details, func(i, j int) bool {
+		return details[i].Timestamp.Before(details[j].Timestamp)
+	})
+	start := len(details) - maxRequestDetails
+	trimmed := make([]RequestDetail, maxRequestDetails)
+	copy(trimmed, details[start:])
+	return trimmed
 }
 
 func formatHour(hour int) string {

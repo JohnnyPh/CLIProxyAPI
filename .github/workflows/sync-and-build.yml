@@ -31,13 +31,13 @@ jobs:
             echo "Already up to date."
             echo "changes_detected=false" >> $GITHUB_OUTPUT
           else
-            echo "Updates detected. Rebasing..."
-            if git rebase upstream/main; then
-              echo "Rebase successful."
-              git push origin $CURRENT_BRANCH --force
+            echo "Updates detected. Fast-forwarding..."
+            if git merge --ff-only upstream/main; then
+              echo "Fast-forward successful."
+              git push origin $CURRENT_BRANCH
               echo "changes_detected=true" >> $GITHUB_OUTPUT
             else
-              echo "::error::Rebase Conflict Detected! Cannot sync automatically."
+              echo "::error::Fast-forward failed (diverged history). Cannot sync automatically."
               exit 1
             fi
           fi

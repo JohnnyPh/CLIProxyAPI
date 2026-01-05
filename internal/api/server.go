@@ -59,15 +59,11 @@ func defaultRequestLoggerFactory(cfg *config.Config, configPath string) logging.
 	configDir := filepath.Dir(configPath)
 	if base := util.WritablePath(); base != "" {
 		logger := logging.NewFileRequestLogger(cfg.RequestLog, filepath.Join(base, "logs"), configDir)
-		if toggler, ok := logger.(interface{ SetRedactDetails(bool) }); ok {
-			toggler.SetRedactDetails(cfg.RequestLogRedactDetails)
-		}
+		logger.SetRedactDetails(cfg.RequestLogRedactDetails)
 		return logger
 	}
 	logger := logging.NewFileRequestLogger(cfg.RequestLog, "logs", configDir)
-	if toggler, ok := logger.(interface{ SetRedactDetails(bool) }); ok {
-		toggler.SetRedactDetails(cfg.RequestLogRedactDetails)
-	}
+	logger.SetRedactDetails(cfg.RequestLogRedactDetails)
 	return logger
 }
 

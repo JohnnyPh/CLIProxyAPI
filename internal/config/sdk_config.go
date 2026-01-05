@@ -17,6 +17,9 @@ type SDKConfig struct {
 	// RequestLog enables or disables detailed request logging functionality.
 	RequestLog bool `yaml:"request-log" json:"request-log"`
 
+	// RequestLogRedactDetails masks sensitive request details in request logs.
+	RequestLogRedactDetails bool `yaml:"request-log-redact-details" json:"request-log-redact-details"`
+
 	// APIKeys is a list of keys for authenticating clients to this proxy server.
 	APIKeys []string `yaml:"api-keys" json:"api-keys"`
 

@@ -236,6 +236,14 @@ func (h *Handler) PutRequestLog(c *gin.Context) {
 	h.updateBoolField(c, func(v bool) { h.cfg.RequestLog = v })
 }
 
+// Request log redaction
+func (h *Handler) GetRequestLogRedactDetails(c *gin.Context) {
+	c.JSON(200, gin.H{"request-log-redact-details": h.cfg.RequestLogRedactDetails})
+}
+func (h *Handler) PutRequestLogRedactDetails(c *gin.Context) {
+	h.updateBoolField(c, func(v bool) { h.cfg.RequestLogRedactDetails = v })
+}
+
 // Websocket auth
 func (h *Handler) GetWebsocketAuth(c *gin.Context) {
 	c.JSON(200, gin.H{"ws-auth": h.cfg.WebsocketAuth})

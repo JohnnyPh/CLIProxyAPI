@@ -269,10 +269,11 @@ func TestBuildConfigChangeDetails_FlagsAndKeys(t *testing.T) {
 			SecretKey:             "",
 		},
 		SDKConfig: sdkconfig.SDKConfig{
-			RequestLog:       true,
-			ProxyURL:         "http://new-proxy",
-			APIKeys:          []string{" key-1 ", "key-2"},
-			ForceModelPrefix: true,
+			RequestLog:              true,
+			RequestLogRedactDetails: true,
+			ProxyURL:                "http://new-proxy",
+			APIKeys:                 []string{" key-1 ", "key-2"},
+			ForceModelPrefix:        true,
 		},
 	}
 
@@ -283,6 +284,7 @@ func TestBuildConfigChangeDetails_FlagsAndKeys(t *testing.T) {
 	expectContains(t, details, "usage-statistics-redact-details: false -> true")
 	expectContains(t, details, "disable-cooling: false -> true")
 	expectContains(t, details, "request-log: false -> true")
+	expectContains(t, details, "request-log-redact-details: false -> true")
 	expectContains(t, details, "request-retry: 1 -> 2")
 	expectContains(t, details, "max-retry-interval: 1 -> 3")
 	expectContains(t, details, "proxy-url: http://old-proxy -> http://new-proxy")

@@ -58,9 +58,17 @@ type ServerOption func(*serverOptionConfig)
 func defaultRequestLoggerFactory(cfg *config.Config, configPath string) logging.RequestLogger {
 	configDir := filepath.Dir(configPath)
 	if base := util.WritablePath(); base != "" {
-		return logging.NewFileRequestLogger(cfg.RequestLog, filepath.Join(base, "logs"), configDir)
+		logger := logging.NewFileRequestLogger(cfg.RequestLog, filepath.Join(base, "logs"), configDir)
+		if toggler, ok := logger.(interface{ SetRedactDetails(bool) }); ok {
+			toggler.SetRedactDetails(cfg.RequestLogRedactDetails)
+		}
+		return logger
 	}
-	return logging.NewFileRequestLogger(cfg.RequestLog, "logs", configDir)
+	logger := logging.NewFileRequestLogger(cfg.RequestLog, "logs", configDir)
+	if toggler, ok := logger.(interface{ SetRedactDetails(bool) }); ok {
+		toggler.SetRedactDetails(cfg.RequestLogRedactDetails)
+	}
+	return logger
 }
 
 // WithMiddleware appends additional Gin middleware during server construction.
@@ -499,7 +507,7 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/usage-statistics-enabled", s.mgmt.GetUsageStatisticsEnabled)
 		mgmt.PUT("/usage-statistics-enabled", s.mgmt.PutUsageStatisticsEnabled)
 		mgmt.PATCH("/usage-statistics-enabled", s.mgmt.PutUsageStatisticsEnabled)
-		
+
 		mgmt.GET("/usage-statistics-redact-details", s.mgmt.GetUsageStatisticsRedactDetails)
 		mgmt.PUT("/usage-statistics-redact-details", s.mgmt.PutUsageStatisticsRedactDetails)
 		mgmt.PATCH("/usage-statistics-redact-details", s.mgmt.PutUsageStatisticsRedactDetails)
@@ -537,6 +545,9 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/request-log", s.mgmt.GetRequestLog)
 		mgmt.PUT("/request-log", s.mgmt.PutRequestLog)
 		mgmt.PATCH("/request-log", s.mgmt.PutRequestLog)
+		mgmt.GET("/request-log-redact-details", s.mgmt.GetRequestLogRedactDetails)
+		mgmt.PUT("/request-log-redact-details", s.mgmt.PutRequestLogRedactDetails)
+		mgmt.PATCH("/request-log-redact-details", s.mgmt.PutRequestLogRedactDetails)
 		mgmt.GET("/ws-auth", s.mgmt.GetWebsocketAuth)
 		mgmt.PUT("/ws-auth", s.mgmt.PutWebsocketAuth)
 		mgmt.PATCH("/ws-auth", s.mgmt.PutWebsocketAuth)
@@ -879,6 +890,20 @@ func (s *Server) UpdateClients(cfg *config.Config) {
 			log.Debugf("request logging updated from %t to %t", previousRequestLog, cfg.RequestLog)
 		} else {
 			log.Debugf("request logging toggled to %t", cfg.RequestLog)
+		}
+	}
+	previousRequestLogRedact := false
+	if oldCfg != nil {
+		previousRequestLogRedact = oldCfg.RequestLogRedactDetails
+	}
+	if s.requestLogger != nil && (oldCfg == nil || previousRequestLogRedact != cfg.RequestLogRedactDetails) {
+		if toggler, ok := s.requestLogger.(interface{ SetRedactDetails(bool) }); ok {
+			toggler.SetRedactDetails(cfg.RequestLogRedactDetails)
+		}
+		if oldCfg != nil {
+			log.Debugf("request_log_redact_details updated from %t to %t", previousRequestLogRedact, cfg.RequestLogRedactDetails)
+		} else {
+			log.Debugf("request_log_redact_details toggled to %t", cfg.RequestLogRedactDetails)
 		}
 	}
 

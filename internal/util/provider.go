@@ -4,6 +4,7 @@
 package util
 
 import (
+	"encoding/json"
 	"net/url"
 	"strings"
 
@@ -253,6 +254,50 @@ func MaskSensitiveQuery(raw string) string {
 	return strings.Join(parts, "&")
 }
 
+// MaskSensitiveURL masks sensitive query parameters in a URL string.
+func MaskSensitiveURL(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return raw
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	maskedQuery := MaskSensitiveQuery(parsed.RawQuery)
+	if maskedQuery == parsed.RawQuery {
+		return raw
+	}
+	parsed.RawQuery = maskedQuery
+	return parsed.String()
+}
+
+// RedactSensitiveBody masks sensitive values in request bodies when possible.
+// It supports JSON payloads and form-encoded bodies based on Content-Type.
+func RedactSensitiveBody(body []byte, headers map[string][]string) []byte {
+	if len(body) == 0 {
+		return body
+	}
+	contentType := ""
+	for key, values := range headers {
+		if strings.EqualFold(strings.TrimSpace(key), "content-type") && len(values) > 0 {
+			contentType = strings.ToLower(strings.TrimSpace(values[0]))
+			break
+		}
+	}
+	switch {
+	case strings.Contains(contentType, "json"):
+		return redactJSONPayload(body)
+	case strings.Contains(contentType, "application/x-www-form-urlencoded"):
+		masked := MaskSensitiveQuery(string(body))
+		if masked == string(body) {
+			return body
+		}
+		return []byte(masked)
+	default:
+		return body
+	}
+}
+
 func shouldMaskQueryParam(key string) bool {
 	key = strings.ToLower(strings.TrimSpace(key))
 	if key == "" {
@@ -263,6 +308,75 @@ func shouldMaskQueryParam(key string) bool {
 		return true
 	}
 	if strings.Contains(key, "token") || strings.Contains(key, "secret") {
+		return true
+	}
+	return false
+}
+
+func redactJSONPayload(body []byte) []byte {
+	var payload any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return body
+	}
+	if !redactJSONValue(payload) {
+		return body
+	}
+	redacted, err := json.Marshal(payload)
+	if err != nil {
+		return body
+	}
+	return redacted
+}
+
+func redactJSONValue(value any) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		changed := false
+		for key, entry := range typed {
+			if shouldRedactKey(key) {
+				typed[key] = redactValue(entry)
+				changed = true
+				continue
+			}
+			if redactJSONValue(entry) {
+				changed = true
+			}
+		}
+		return changed
+	case []any:
+		changed := false
+		for index, entry := range typed {
+			if redactJSONValue(entry) {
+				typed[index] = entry
+				changed = true
+			}
+		}
+		return changed
+	default:
+		return false
+	}
+}
+
+func redactValue(value any) any {
+	if value == nil {
+		return "<redacted>"
+	}
+	if str, ok := value.(string); ok {
+		return HideAPIKey(str)
+	}
+	return "<redacted>"
+}
+
+func shouldRedactKey(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	if normalized == "" {
+		return false
+	}
+	normalized = strings.TrimSuffix(normalized, "[]")
+	if normalized == "key" || strings.Contains(normalized, "api-key") || strings.Contains(normalized, "apikey") || strings.Contains(normalized, "api_key") {
+		return true
+	}
+	if strings.Contains(normalized, "token") || strings.Contains(normalized, "secret") || strings.Contains(normalized, "authorization") {
 		return true
 	}
 	return false

@@ -27,7 +27,7 @@ jobs:
           git fetch upstream --tags
           CURRENT_BRANCH=$(git branch --show-current)
           echo "Current branch: $CURRENT_BRANCH"
-          
+
           if git merge-base --is-ancestor HEAD upstream/main; then
             if [ "$(git rev-parse HEAD)" = "$(git rev-parse upstream/main)" ]; then
               echo "Already up to date."

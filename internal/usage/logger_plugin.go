@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"sort"
 	"strconv"
@@ -19,37 +20,38 @@ import (
 
 	"github.com/gin-gonic/gin"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/usage"
-	log "github.com/sirupsen/logrus"
 )
 
 var statisticsEnabled atomic.Bool
 var statisticsRedactDetails atomic.Bool
 
-// statsFileName defines the location of the stats file.
-const statsFileName = "usage_stats.json"
-const maxRequestDetails = 500
+const (
+	statsFileName     = "usage_stats.json"
+	maxRequestDetails = 500
+	saveInterval      = time.Minute
+	loadSaveFilePerm  = 0o600
+)
 
 func init() {
 	statisticsEnabled.Store(true)
-	statisticsRedactDetails.Store(false)
+	statisticsRedactDetails.Store(true)
 	coreusage.RegisterPlugin(NewLoggerPlugin())
 
-	// Automatically load existing data if the file exists
 	if err := defaultRequestStatistics.Load(statsFileName); err != nil {
 		if !os.IsNotExist(err) {
-			log.Warnf("Failed to load usage stats from %s: %v", statsFileName, err)
+			log.Printf("usage stats: failed to load %s: %v", statsFileName, err)
 		}
 	} else {
-		log.Infof("Loaded usage stats from %s", statsFileName)
+		log.Printf("usage stats: loaded from %s", statsFileName)
+		defaultRequestStatistics.RedactSensitiveDetails()
 	}
 
-	// Start a background routine to save data every 1 minute
 	go func() {
-		ticker := time.NewTicker(1 * time.Minute)
+		ticker := time.NewTicker(saveInterval)
 		defer ticker.Stop()
 		for range ticker.C {
 			if err := defaultRequestStatistics.Save(statsFileName); err != nil {
-				log.Warnf("Failed to save usage stats to %s: %v", statsFileName, err)
+				log.Printf("usage stats: failed to save %s: %v", statsFileName, err)
 			}
 		}
 	}()
@@ -89,12 +91,12 @@ func SetStatisticsEnabled(enabled bool) { statisticsEnabled.Store(enabled) }
 // StatisticsEnabled reports the current recording state.
 func StatisticsEnabled() bool { return statisticsEnabled.Load() }
 
-// SetStatisticsRedactDetails toggles whether sensitive request details are redacted.
-func SetStatisticsRedactDetails(enabled bool) {
-	previous := statisticsRedactDetails.Swap(enabled)
-	if enabled && !previous {
-		defaultRequestStatistics.RedactSensitiveDetails()
+// SaveStatistics writes the shared statistics store to disk.
+func SaveStatistics() error {
+	if defaultRequestStatistics == nil {
+		return nil
 	}
+	return defaultRequestStatistics.Save(statsFileName)
 }
 
 // StatisticsRedactDetails reports the current redaction state.
@@ -186,14 +188,6 @@ var defaultRequestStatistics = NewRequestStatistics()
 
 // GetRequestStatistics returns the shared statistics store.
 func GetRequestStatistics() *RequestStatistics { return defaultRequestStatistics }
-
-// SaveStatistics writes the shared statistics store to disk.
-func SaveStatistics() error {
-	if defaultRequestStatistics == nil {
-		return nil
-	}
-	return defaultRequestStatistics.Save(statsFileName)
-}
 
 // NewRequestStatistics constructs an empty statistics store.
 func NewRequestStatistics() *RequestStatistics {
@@ -287,7 +281,6 @@ func (s *RequestStatistics) updateAPIStats(stats *apiStats, model string, detail
 	modelStatsValue.TotalRequests++
 	modelStatsValue.TotalTokens += detail.Tokens.TotalTokens
 	modelStatsValue.Details = append(modelStatsValue.Details, detail)
-	modelStatsValue.Details = trimRequestDetails(modelStatsValue.Details)
 }
 
 // Snapshot returns a copy of the aggregated metrics for external consumption.
@@ -306,11 +299,7 @@ func (s *RequestStatistics) Snapshot() StatisticsSnapshot {
 	result.TotalTokens = s.totalTokens
 
 	result.APIs = make(map[string]APISnapshot, len(s.apis))
-	redact := statisticsRedactDetails.Load()
 	for apiName, stats := range s.apis {
-		if redact {
-			apiName = redactAPIIdentifier(apiName)
-		}
 		apiSnapshot := APISnapshot{
 			TotalRequests: stats.TotalRequests,
 			TotalTokens:   stats.TotalTokens,
@@ -319,12 +308,6 @@ func (s *RequestStatistics) Snapshot() StatisticsSnapshot {
 		for modelName, modelStatsValue := range stats.Models {
 			requestDetails := make([]RequestDetail, len(modelStatsValue.Details))
 			copy(requestDetails, modelStatsValue.Details)
-			if redact {
-				for i := range requestDetails {
-					requestDetails[i].Source = ""
-					requestDetails[i].AuthIndex = ""
-				}
-			}
 			apiSnapshot.Models[modelName] = ModelSnapshot{
 				TotalRequests: modelStatsValue.TotalRequests,
 				TotalTokens:   modelStatsValue.TotalTokens,
@@ -344,10 +327,9 @@ func (s *RequestStatistics) Snapshot() StatisticsSnapshot {
 		key := formatHour(hour)
 		result.RequestsByHour[key] = v
 	}
-
 	result.RequestsByMinute = make(map[string]int64, len(s.requestsByMinute))
-	for minute, v := range s.requestsByMinute {
-		result.RequestsByMinute[minute] = v
+	for k, v := range s.requestsByMinute {
+		result.RequestsByMinute[k] = v
 	}
 
 	result.TokensByDay = make(map[string]int64, len(s.tokensByDay))
@@ -360,10 +342,9 @@ func (s *RequestStatistics) Snapshot() StatisticsSnapshot {
 		key := formatHour(hour)
 		result.TokensByHour[key] = v
 	}
-
 	result.TokensByMinute = make(map[string]int64, len(s.tokensByMinute))
-	for minute, v := range s.tokensByMinute {
-		result.TokensByMinute[minute] = v
+	for k, v := range s.tokensByMinute {
+		result.TokensByMinute[k] = v
 	}
 
 	return result
@@ -450,7 +431,9 @@ func (s *RequestStatistics) recordImported(apiName, modelName string, stats *api
 		s.successCount++
 	}
 	s.totalTokens += totalTokens
+
 	s.updateAPIStats(stats, modelName, detail)
+
 	dayKey := detail.Timestamp.Format("2006-01-02")
 	hourKey := detail.Timestamp.Hour()
 	minuteKey := detail.Timestamp.Format("2006-01-02 15:04")
@@ -461,6 +444,116 @@ func (s *RequestStatistics) recordImported(apiName, modelName string, stats *api
 	s.tokensByDay[dayKey] += totalTokens
 	s.tokensByHour[hourKey] += totalTokens
 	s.tokensByMinute[minuteKey] += totalTokens
+}
+
+// Save writes the current statistics to a JSON file.
+func (s *RequestStatistics) Save(filename string) error {
+	snapshot := s.Snapshot()
+
+	for apiKey, apiSnap := range snapshot.APIs {
+		for modelName, modelSnap := range apiSnap.Models {
+			modelSnap.Details = trimRequestDetails(modelSnap.Details)
+			apiSnap.Models[modelName] = modelSnap
+		}
+		snapshot.APIs[apiKey] = apiSnap
+	}
+
+	data, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filename, data, loadSaveFilePerm)
+}
+
+// Load reads statistics from a JSON file and restores the state.
+func (s *RequestStatistics) Load(filename string) error {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return err
+	}
+	var snapshot StatisticsSnapshot
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return err
+	}
+	s.Restore(snapshot)
+	return nil
+}
+
+// Restore populates the RequestStatistics from a snapshot.
+func (s *RequestStatistics) Restore(snapshot StatisticsSnapshot) {
+	if s == nil {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.totalRequests = snapshot.TotalRequests
+	s.successCount = snapshot.SuccessCount
+	s.failureCount = snapshot.FailureCount
+	s.totalTokens = snapshot.TotalTokens
+
+	if s.apis == nil {
+		s.apis = make(map[string]*apiStats)
+	}
+	for apiName, apiSnap := range snapshot.APIs {
+		stats := &apiStats{
+			TotalRequests: apiSnap.TotalRequests,
+			TotalTokens:   apiSnap.TotalTokens,
+			Models:        make(map[string]*modelStats),
+		}
+		for modelName, modelSnap := range apiSnap.Models {
+			details := make([]RequestDetail, len(modelSnap.Details))
+			copy(details, modelSnap.Details)
+			stats.Models[modelName] = &modelStats{
+				TotalRequests: modelSnap.TotalRequests,
+				TotalTokens:   modelSnap.TotalTokens,
+				Details:       details,
+			}
+		}
+		s.apis[apiName] = stats
+	}
+
+	if s.requestsByDay == nil {
+		s.requestsByDay = make(map[string]int64)
+	}
+	for k, v := range snapshot.RequestsByDay {
+		s.requestsByDay[k] = v
+	}
+	if s.requestsByHour == nil {
+		s.requestsByHour = make(map[int]int64)
+	}
+	for k, v := range snapshot.RequestsByHour {
+		if h, err := strconv.Atoi(k); err == nil {
+			s.requestsByHour[h] = v
+		}
+	}
+	if s.requestsByMinute == nil {
+		s.requestsByMinute = make(map[string]int64)
+	}
+	for k, v := range snapshot.RequestsByMinute {
+		s.requestsByMinute[k] = v
+	}
+	if s.tokensByDay == nil {
+		s.tokensByDay = make(map[string]int64)
+	}
+	for k, v := range snapshot.TokensByDay {
+		s.tokensByDay[k] = v
+	}
+	if s.tokensByHour == nil {
+		s.tokensByHour = make(map[int]int64)
+	}
+	for k, v := range snapshot.TokensByHour {
+		if h, err := strconv.Atoi(k); err == nil {
+			s.tokensByHour[h] = v
+		}
+	}
+	if s.tokensByMinute == nil {
+		s.tokensByMinute = make(map[string]int64)
+	}
+	for k, v := range snapshot.TokensByMinute {
+		s.tokensByMinute[k] = v
+	}
 }
 
 func dedupKey(apiName, modelName string, detail RequestDetail) string {
@@ -480,100 +573,6 @@ func dedupKey(apiName, modelName string, detail RequestDetail) string {
 		tokens.CachedTokens,
 		tokens.TotalTokens,
 	)
-}
-
-// Save writes the current statistics to a JSON file.
-func (s *RequestStatistics) Save(filename string) error {
-	snapshot := s.Snapshot()
-
-	// OPTIMIZATION: Trim the 'Details' slice from the snapshot before saving.
-	// This keeps the JSON file bounded while preserving recent request context.
-	for apiKey, apiSnap := range snapshot.APIs {
-		for modelName, modelSnap := range apiSnap.Models {
-			modelSnap.Details = trimRequestDetails(modelSnap.Details)
-			apiSnap.Models[modelName] = modelSnap
-		}
-		snapshot.APIs[apiKey] = apiSnap
-	}
-
-	data, err := json.MarshalIndent(snapshot, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filename, data, 0600)
-}
-
-// Load reads statistics from a JSON file and restores the state.
-func (s *RequestStatistics) Load(filename string) error {
-	data, err := os.ReadFile(filename)
-	if err != nil {
-		return err
-	}
-	var snapshot StatisticsSnapshot
-	if err := json.Unmarshal(data, &snapshot); err != nil {
-		return err
-	}
-	s.Restore(snapshot)
-	return nil
-}
-
-// Restore populates the RequestStatistics from a snapshot.
-func (s *RequestStatistics) Restore(snapshot StatisticsSnapshot) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.totalRequests = snapshot.TotalRequests
-	s.successCount = snapshot.SuccessCount
-	s.failureCount = snapshot.FailureCount
-	s.totalTokens = snapshot.TotalTokens
-
-	// Restore APIs
-	for apiName, apiSnap := range snapshot.APIs {
-		stats := &apiStats{
-			TotalRequests: apiSnap.TotalRequests,
-			TotalTokens:   apiSnap.TotalTokens,
-			Models:        make(map[string]*modelStats),
-		}
-		for modelName, modelSnap := range apiSnap.Models {
-			// Details from the file are a trimmed list of recent requests due to optimization.
-			// Initialize a new slice for details to ensure the loaded stats are independent.
-			details := make([]RequestDetail, 0)
-			if len(modelSnap.Details) > 0 {
-				details = make([]RequestDetail, len(modelSnap.Details))
-				copy(details, modelSnap.Details)
-			}
-			stats.Models[modelName] = &modelStats{
-				TotalRequests: modelSnap.TotalRequests,
-				TotalTokens:   modelSnap.TotalTokens,
-				Details:       details,
-			}
-		}
-		s.apis[apiName] = stats
-	}
-
-	// Restore Trends Maps
-	for k, v := range snapshot.RequestsByDay {
-		s.requestsByDay[k] = v
-	}
-	for k, v := range snapshot.TokensByDay {
-		s.tokensByDay[k] = v
-	}
-	for k, v := range snapshot.RequestsByHour {
-		if h, err := strconv.Atoi(k); err == nil {
-			s.requestsByHour[h] = v
-		}
-	}
-	for k, v := range snapshot.RequestsByMinute {
-		s.requestsByMinute[k] = v
-	}
-	for k, v := range snapshot.TokensByHour {
-		if h, err := strconv.Atoi(k); err == nil {
-			s.tokensByHour[h] = v
-		}
-	}
-	for k, v := range snapshot.TokensByMinute {
-		s.tokensByMinute[k] = v
-	}
 }
 
 func resolveAPIIdentifier(ctx context.Context, record coreusage.Record) string {
@@ -678,6 +677,7 @@ func (s *RequestStatistics) RedactSensitiveDetails() {
 	if s == nil {
 		return
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

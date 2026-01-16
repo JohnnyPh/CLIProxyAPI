@@ -91,6 +91,17 @@ func SetStatisticsEnabled(enabled bool) { statisticsEnabled.Store(enabled) }
 // StatisticsEnabled reports the current recording state.
 func StatisticsEnabled() bool { return statisticsEnabled.Load() }
 
+// SetStatisticsRedactDetails toggles whether sensitive identifiers are removed from stored usage statistics.
+//
+// Note: Enabling redaction is destructive for already-recorded statistics; once identifiers are removed,
+// they can't be restored.
+func SetStatisticsRedactDetails(redact bool) {
+	statisticsRedactDetails.Store(redact)
+	if redact && defaultRequestStatistics != nil {
+		defaultRequestStatistics.RedactSensitiveDetails()
+	}
+}
+
 // SaveStatistics writes the shared statistics store to disk.
 func SaveStatistics() error {
 	if defaultRequestStatistics == nil {

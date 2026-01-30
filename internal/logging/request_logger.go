@@ -44,10 +44,12 @@ type RequestLogger interface {
 	//   - apiRequest: The API request data
 	//   - apiResponse: The API response data
 	//   - requestID: Optional request ID for log file naming
+	//   - requestTimestamp: When the request was received
+	//   - apiResponseTimestamp: When the API response was received
 	//
 	// Returns:
 	//   - error: An error if logging fails, nil otherwise
-	LogRequest(url, method string, requestHeaders map[string][]string, body []byte, statusCode int, responseHeaders map[string][]string, response, apiRequest, apiResponse []byte, apiResponseErrors []*interfaces.ErrorMessage, requestID string) error
+	LogRequest(url, method string, requestHeaders map[string][]string, body []byte, statusCode int, responseHeaders map[string][]string, response, apiRequest, apiResponse []byte, apiResponseErrors []*interfaces.ErrorMessage, requestID string, requestTimestamp, apiResponseTimestamp time.Time) error
 
 	// LogStreamingRequest initiates logging for a streaming request and returns a writer for chunks.
 	//
@@ -108,6 +110,12 @@ type StreamingLogWriter interface {
 	// Returns:
 	//   - error: An error if writing fails, nil otherwise
 	WriteAPIResponse(apiResponse []byte) error
+
+	// SetFirstChunkTimestamp sets the TTFB timestamp captured when first chunk was received.
+	//
+	// Parameters:
+	//   - timestamp: The time when first response chunk was received
+	SetFirstChunkTimestamp(timestamp time.Time)
 
 	// Close finalizes the log file and cleans up resources.
 	//
@@ -188,20 +196,22 @@ func (l *FileRequestLogger) SetRedactDetails(redact bool) {
 //   - apiRequest: The API request data
 //   - apiResponse: The API response data
 //   - requestID: Optional request ID for log file naming
+//   - requestTimestamp: When the request was received
+//   - apiResponseTimestamp: When the API response was received
 //
 // Returns:
 //   - error: An error if logging fails, nil otherwise
-func (l *FileRequestLogger) LogRequest(url, method string, requestHeaders map[string][]string, body []byte, statusCode int, responseHeaders map[string][]string, response, apiRequest, apiResponse []byte, apiResponseErrors []*interfaces.ErrorMessage, requestID string) error {
-	return l.logRequest(url, method, requestHeaders, body, statusCode, responseHeaders, response, apiRequest, apiResponse, apiResponseErrors, false, requestID)
+func (l *FileRequestLogger) LogRequest(url, method string, requestHeaders map[string][]string, body []byte, statusCode int, responseHeaders map[string][]string, response, apiRequest, apiResponse []byte, apiResponseErrors []*interfaces.ErrorMessage, requestID string, requestTimestamp, apiResponseTimestamp time.Time) error {
+	return l.logRequest(url, method, requestHeaders, body, statusCode, responseHeaders, response, apiRequest, apiResponse, apiResponseErrors, false, requestID, requestTimestamp, apiResponseTimestamp)
 }
 
 // LogRequestWithOptions logs a request with optional forced logging behavior.
 // The force flag allows writing error logs even when regular request logging is disabled.
-func (l *FileRequestLogger) LogRequestWithOptions(url, method string, requestHeaders map[string][]string, body []byte, statusCode int, responseHeaders map[string][]string, response, apiRequest, apiResponse []byte, apiResponseErrors []*interfaces.ErrorMessage, force bool, requestID string) error {
-	return l.logRequest(url, method, requestHeaders, body, statusCode, responseHeaders, response, apiRequest, apiResponse, apiResponseErrors, force, requestID)
+func (l *FileRequestLogger) LogRequestWithOptions(url, method string, requestHeaders map[string][]string, body []byte, statusCode int, responseHeaders map[string][]string, response, apiRequest, apiResponse []byte, apiResponseErrors []*interfaces.ErrorMessage, force bool, requestID string, requestTimestamp, apiResponseTimestamp time.Time) error {
+	return l.logRequest(url, method, requestHeaders, body, statusCode, responseHeaders, response, apiRequest, apiResponse, apiResponseErrors, force, requestID, requestTimestamp, apiResponseTimestamp)
 }
 
-func (l *FileRequestLogger) logRequest(url, method string, requestHeaders map[string][]string, body []byte, statusCode int, responseHeaders map[string][]string, response, apiRequest, apiResponse []byte, apiResponseErrors []*interfaces.ErrorMessage, force bool, requestID string) error {
+func (l *FileRequestLogger) logRequest(url, method string, requestHeaders map[string][]string, body []byte, statusCode int, responseHeaders map[string][]string, response, apiRequest, apiResponse []byte, apiResponseErrors []*interfaces.ErrorMessage, force bool, requestID string, requestTimestamp, apiResponseTimestamp time.Time) error {
 	if !l.enabled && !force {
 		return nil
 	}
@@ -256,6 +266,8 @@ func (l *FileRequestLogger) logRequest(url, method string, requestHeaders map[st
 		responseHeaders,
 		responseToWrite,
 		decompressErr,
+		requestTimestamp,
+		apiResponseTimestamp,
 	)
 	if errClose := logFile.Close(); errClose != nil {
 		log.WithError(errClose).Warn("failed to close request log file")
@@ -516,17 +528,22 @@ func (l *FileRequestLogger) writeNonStreamingLog(
 	responseHeaders map[string][]string,
 	response []byte,
 	decompressErr error,
+	requestTimestamp time.Time,
+	apiResponseTimestamp time.Time,
 ) error {
-	if errWrite := writeRequestInfoWithBody(w, url, method, requestHeaders, requestBody, requestBodyPath, time.Now()); errWrite != nil {
+	if requestTimestamp.IsZero() {
+		requestTimestamp = time.Now()
+	}
+	if errWrite := writeRequestInfoWithBody(w, url, method, requestHeaders, requestBody, requestBodyPath, requestTimestamp); errWrite != nil {
 		return errWrite
 	}
-	if errWrite := writeAPISection(w, "=== API REQUEST ===\n", "=== API REQUEST", apiRequest); errWrite != nil {
+	if errWrite := writeAPISection(w, "=== API REQUEST ===\n", "=== API REQUEST", apiRequest, time.Time{}); errWrite != nil {
 		return errWrite
 	}
 	if errWrite := writeAPIErrorResponses(w, apiResponseErrors); errWrite != nil {
 		return errWrite
 	}
-	if errWrite := writeAPISection(w, "=== API RESPONSE ===\n", "=== API RESPONSE", apiResponse); errWrite != nil {
+	if errWrite := writeAPISection(w, "=== API RESPONSE ===\n", "=== API RESPONSE", apiResponse, apiResponseTimestamp); errWrite != nil {
 		return errWrite
 	}
 	return writeResponseSection(w, statusCode, true, responseHeaders, bytes.NewReader(response), decompressErr, true)
@@ -600,7 +617,7 @@ func writeRequestInfoWithBody(
 	return nil
 }
 
-func writeAPISection(w io.Writer, sectionHeader string, sectionPrefix string, payload []byte) error {
+func writeAPISection(w io.Writer, sectionHeader string, sectionPrefix string, payload []byte, timestamp time.Time) error {
 	if len(payload) == 0 {
 		return nil
 	}
@@ -617,6 +634,11 @@ func writeAPISection(w io.Writer, sectionHeader string, sectionPrefix string, pa
 	} else {
 		if _, errWrite := io.WriteString(w, sectionHeader); errWrite != nil {
 			return errWrite
+		}
+		if !timestamp.IsZero() {
+			if _, errWrite := io.WriteString(w, fmt.Sprintf("Timestamp: %s\n", timestamp.Format(time.RFC3339Nano))); errWrite != nil {
+				return errWrite
+			}
 		}
 		if _, errWrite := w.Write(payload); errWrite != nil {
 			return errWrite
@@ -991,6 +1013,9 @@ type FileStreamingLogWriter struct {
 
 	// apiResponse stores the upstream API response data.
 	apiResponse []byte
+
+	// apiResponseTimestamp captures when the API response was received.
+	apiResponseTimestamp time.Time
 }
 
 // WriteChunkAsync writes a response chunk asynchronously (non-blocking).
@@ -1068,6 +1093,12 @@ func (w *FileStreamingLogWriter) WriteAPIResponse(apiResponse []byte) error {
 	}
 	w.apiResponse = bytes.Clone(apiResponse)
 	return nil
+}
+
+func (w *FileStreamingLogWriter) SetFirstChunkTimestamp(timestamp time.Time) {
+	if !timestamp.IsZero() {
+		w.apiResponseTimestamp = timestamp
+	}
 }
 
 // Close finalizes the log file and cleans up resources.
@@ -1157,10 +1188,10 @@ func (w *FileStreamingLogWriter) writeFinalLog(logFile *os.File) error {
 	if errWrite := writeRequestInfoWithBody(logFile, w.url, w.method, w.requestHeaders, nil, w.requestBodyPath, w.timestamp); errWrite != nil {
 		return errWrite
 	}
-	if errWrite := writeAPISection(logFile, "=== API REQUEST ===\n", "=== API REQUEST", w.apiRequest); errWrite != nil {
+	if errWrite := writeAPISection(logFile, "=== API REQUEST ===\n", "=== API REQUEST", w.apiRequest, time.Time{}); errWrite != nil {
 		return errWrite
 	}
-	if errWrite := writeAPISection(logFile, "=== API RESPONSE ===\n", "=== API RESPONSE", w.apiResponse); errWrite != nil {
+	if errWrite := writeAPISection(logFile, "=== API RESPONSE ===\n", "=== API RESPONSE", w.apiResponse, w.apiResponseTimestamp); errWrite != nil {
 		return errWrite
 	}
 
@@ -1236,6 +1267,8 @@ func (w *NoOpStreamingLogWriter) WriteAPIRequest(_ []byte) error {
 func (w *NoOpStreamingLogWriter) WriteAPIResponse(_ []byte) error {
 	return nil
 }
+
+func (w *NoOpStreamingLogWriter) SetFirstChunkTimestamp(_ time.Time) {}
 
 // Close is a no-op implementation that does nothing and always returns nil.
 //

@@ -5,8 +5,6 @@ package usage
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -23,7 +21,6 @@ import (
 )
 
 var statisticsEnabled atomic.Bool
-var statisticsRedactDetails atomic.Bool
 
 const (
 	statsFileName     = "usage_stats.json"
@@ -34,7 +31,6 @@ const (
 
 func init() {
 	statisticsEnabled.Store(true)
-	statisticsRedactDetails.Store(true)
 	coreusage.RegisterPlugin(NewLoggerPlugin())
 
 	if err := defaultRequestStatistics.Load(statsFileName); err != nil {
@@ -43,7 +39,6 @@ func init() {
 		}
 	} else {
 		log.Printf("usage stats: loaded from %s", statsFileName)
-		defaultRequestStatistics.RedactSensitiveDetails()
 	}
 
 	go func() {
@@ -91,17 +86,6 @@ func SetStatisticsEnabled(enabled bool) { statisticsEnabled.Store(enabled) }
 // StatisticsEnabled reports the current recording state.
 func StatisticsEnabled() bool { return statisticsEnabled.Load() }
 
-// SetStatisticsRedactDetails toggles whether sensitive identifiers are removed from stored usage statistics.
-//
-// Note: Enabling redaction is destructive for already-recorded statistics; once identifiers are removed,
-// they can't be restored.
-func SetStatisticsRedactDetails(redact bool) {
-	statisticsRedactDetails.Store(redact)
-	if redact && defaultRequestStatistics != nil {
-		defaultRequestStatistics.RedactSensitiveDetails()
-	}
-}
-
 // SaveStatistics writes the shared statistics store to disk.
 func SaveStatistics() error {
 	if defaultRequestStatistics == nil {
@@ -109,9 +93,6 @@ func SaveStatistics() error {
 	}
 	return defaultRequestStatistics.Save(statsFileName)
 }
-
-// StatisticsRedactDetails reports the current redaction state.
-func StatisticsRedactDetails() bool { return statisticsRedactDetails.Load() }
 
 // RequestStatistics maintains aggregated request metrics in memory.
 type RequestStatistics struct {
@@ -228,9 +209,6 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 	detail := normaliseDetail(record.Detail)
 	totalTokens := detail.TotalTokens
 	statsKey := resolveStatisticsKey(ctx, record)
-	if statisticsRedactDetails.Load() {
-		statsKey = redactAPIIdentifier(statsKey)
-	}
 	failed := record.Failed
 	if !failed {
 		failed = !resolveSuccess(ctx)
@@ -266,10 +244,6 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 		AuthIndex: record.AuthIndex,
 		Tokens:    detail,
 		Failed:    failed,
-	}
-	if statisticsRedactDetails.Load() {
-		requestDetail.Source = ""
-		requestDetail.AuthIndex = ""
 	}
 	s.updateAPIStats(stats, modelName, requestDetail)
 
@@ -673,66 +647,6 @@ func trimRequestDetails(details []RequestDetail) []RequestDetail {
 	trimmed := make([]RequestDetail, maxRequestDetails)
 	copy(trimmed, details[start:])
 	return trimmed
-}
-
-func redactAPIIdentifier(identifier string) string {
-	if strings.HasPrefix(identifier, "redacted-") {
-		return identifier
-	}
-	sum := sha256.Sum256([]byte(identifier))
-	return "redacted-" + hex.EncodeToString(sum[:])
-}
-
-// RedactSensitiveDetails removes sensitive identifiers from stored usage statistics.
-func (s *RequestStatistics) RedactSensitiveDetails() {
-	if s == nil {
-		return
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	redactedAPIs := make(map[string]*apiStats, len(s.apis))
-	for apiName, stats := range s.apis {
-		redactedKey := redactAPIIdentifier(apiName)
-		if stats == nil {
-			continue
-		}
-		for _, modelStatsValue := range stats.Models {
-			if modelStatsValue == nil {
-				continue
-			}
-			for i := range modelStatsValue.Details {
-				modelStatsValue.Details[i].Source = ""
-				modelStatsValue.Details[i].AuthIndex = ""
-			}
-		}
-		existing, ok := redactedAPIs[redactedKey]
-		if !ok {
-			redactedAPIs[redactedKey] = stats
-			continue
-		}
-		existing.TotalRequests += stats.TotalRequests
-		existing.TotalTokens += stats.TotalTokens
-		if existing.Models == nil {
-			existing.Models = make(map[string]*modelStats)
-		}
-		for modelName, modelStatsValue := range stats.Models {
-			if modelStatsValue == nil {
-				continue
-			}
-			existingModel, ok := existing.Models[modelName]
-			if !ok {
-				existing.Models[modelName] = modelStatsValue
-				continue
-			}
-			existingModel.TotalRequests += modelStatsValue.TotalRequests
-			existingModel.TotalTokens += modelStatsValue.TotalTokens
-			existingModel.Details = append(existingModel.Details, modelStatsValue.Details...)
-			existingModel.Details = trimRequestDetails(existingModel.Details)
-		}
-	}
-	s.apis = redactedAPIs
 }
 
 func formatHour(hour int) string {

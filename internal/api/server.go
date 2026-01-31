@@ -501,13 +501,9 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.PUT("/logs-max-total-size-mb", s.mgmt.PutLogsMaxTotalSizeMB)
 		mgmt.PATCH("/logs-max-total-size-mb", s.mgmt.PutLogsMaxTotalSizeMB)
 
-		mgmt.GET("/usage-statistics-enabled", s.mgmt.GetUsageStatisticsEnabled)
-		mgmt.PUT("/usage-statistics-enabled", s.mgmt.PutUsageStatisticsEnabled)
-		mgmt.PATCH("/usage-statistics-enabled", s.mgmt.PutUsageStatisticsEnabled)
-
-		mgmt.GET("/usage-statistics-redact-details", s.mgmt.GetUsageStatisticsRedactDetails)
-		mgmt.PUT("/usage-statistics-redact-details", s.mgmt.PutUsageStatisticsRedactDetails)
-		mgmt.PATCH("/usage-statistics-redact-details", s.mgmt.PutUsageStatisticsRedactDetails)
+			mgmt.GET("/usage-statistics-enabled", s.mgmt.GetUsageStatisticsEnabled)
+			mgmt.PUT("/usage-statistics-enabled", s.mgmt.PutUsageStatisticsEnabled)
+			mgmt.PATCH("/usage-statistics-enabled", s.mgmt.PutUsageStatisticsEnabled)
 
 		mgmt.GET("/proxy-url", s.mgmt.GetProxyURL)
 		mgmt.PUT("/proxy-url", s.mgmt.PutProxyURL)
@@ -923,27 +919,18 @@ func (s *Server) UpdateClients(cfg *config.Config) {
 		}
 	}
 
-	if oldCfg == nil || oldCfg.UsageStatisticsEnabled != cfg.UsageStatisticsEnabled {
-		usage.SetStatisticsEnabled(cfg.UsageStatisticsEnabled)
-		if oldCfg != nil {
-			log.Debugf("usage_statistics_enabled updated from %t to %t", oldCfg.UsageStatisticsEnabled, cfg.UsageStatisticsEnabled)
+		if oldCfg == nil || oldCfg.UsageStatisticsEnabled != cfg.UsageStatisticsEnabled {
+			usage.SetStatisticsEnabled(cfg.UsageStatisticsEnabled)
+			if oldCfg != nil {
+				log.Debugf("usage_statistics_enabled updated from %t to %t", oldCfg.UsageStatisticsEnabled, cfg.UsageStatisticsEnabled)
 		} else {
 			log.Debugf("usage_statistics_enabled toggled to %t", cfg.UsageStatisticsEnabled)
+			}
 		}
-	}
 
-	if oldCfg == nil || oldCfg.UsageStatisticsRedactDetails != cfg.UsageStatisticsRedactDetails {
-		usage.SetStatisticsRedactDetails(cfg.UsageStatisticsRedactDetails)
-		if oldCfg != nil {
-			log.Debugf("usage_statistics_redact_details updated from %t to %t", oldCfg.UsageStatisticsRedactDetails, cfg.UsageStatisticsRedactDetails)
-		} else {
-			log.Debugf("usage_statistics_redact_details toggled to %t", cfg.UsageStatisticsRedactDetails)
-		}
-	}
-
-	if oldCfg == nil || oldCfg.DisableCooling != cfg.DisableCooling {
-		auth.SetQuotaCooldownDisabled(cfg.DisableCooling)
-		if oldCfg != nil {
+		if oldCfg == nil || oldCfg.DisableCooling != cfg.DisableCooling {
+			auth.SetQuotaCooldownDisabled(cfg.DisableCooling)
+			if oldCfg != nil {
 			log.Debugf("disable_cooling updated from %t to %t", oldCfg.DisableCooling, cfg.DisableCooling)
 		} else {
 			log.Debugf("disable_cooling toggled to %t", cfg.DisableCooling)

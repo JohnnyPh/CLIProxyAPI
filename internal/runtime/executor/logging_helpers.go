@@ -63,16 +63,10 @@ func recordAPIRequest(ctx context.Context, cfg *config.Config, info upstreamRequ
 	index := len(attempts) + 1
 
 	builder := &strings.Builder{}
-	requestURL := info.URL
-	requestBody := info.Body
-	if cfg.RequestLogRedactDetails {
-		requestURL = util.MaskSensitiveURL(requestURL)
-		requestBody = util.RedactSensitiveBody(requestBody, info.Headers)
-	}
 	builder.WriteString(fmt.Sprintf("=== API REQUEST %d ===\n", index))
 	builder.WriteString(fmt.Sprintf("Timestamp: %s\n", time.Now().Format(time.RFC3339Nano)))
-	if requestURL != "" {
-		builder.WriteString(fmt.Sprintf("Upstream URL: %s\n", requestURL))
+	if info.URL != "" {
+		builder.WriteString(fmt.Sprintf("Upstream URL: %s\n", info.URL))
 	} else {
 		builder.WriteString("Upstream URL: <unknown>\n")
 	}
@@ -85,8 +79,8 @@ func recordAPIRequest(ctx context.Context, cfg *config.Config, info upstreamRequ
 	builder.WriteString("\nHeaders:\n")
 	writeHeaders(builder, info.Headers)
 	builder.WriteString("\nBody:\n")
-	if len(requestBody) > 0 {
-		builder.WriteString(string(bytes.Clone(requestBody)))
+	if len(info.Body) > 0 {
+		builder.WriteString(string(bytes.Clone(info.Body)))
 	} else {
 		builder.WriteString("<empty>")
 	}

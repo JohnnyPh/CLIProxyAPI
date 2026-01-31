@@ -86,14 +86,6 @@ func SetStatisticsEnabled(enabled bool) { statisticsEnabled.Store(enabled) }
 // StatisticsEnabled reports the current recording state.
 func StatisticsEnabled() bool { return statisticsEnabled.Load() }
 
-// SaveStatistics writes the shared statistics store to disk.
-func SaveStatistics() error {
-	if defaultRequestStatistics == nil {
-		return nil
-	}
-	return defaultRequestStatistics.Save(statsFileName)
-}
-
 // RequestStatistics maintains aggregated request metrics in memory.
 type RequestStatistics struct {
 	mu sync.RWMutex

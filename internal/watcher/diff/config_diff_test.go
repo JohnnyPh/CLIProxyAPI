@@ -215,21 +215,21 @@ func TestBuildConfigChangeDetails_SecretsAndCounts(t *testing.T) {
 }
 
 func TestBuildConfigChangeDetails_FlagsAndKeys(t *testing.T) {
-		oldCfg := &config.Config{
-			Port:                         1000,
-			AuthDir:                      "/old",
-			Debug:                        false,
-			LoggingToFile:                false,
-			UsageStatisticsEnabled:       false,
-			DisableCooling:               false,
-			RequestRetry:                 1,
-			MaxRetryInterval:             1,
-			WebsocketAuth:                false,
-		QuotaExceeded:                config.QuotaExceeded{SwitchProject: false, SwitchPreviewModel: false},
-		ClaudeKey:                    []config.ClaudeKey{{APIKey: "c1"}},
-		CodexKey:                     []config.CodexKey{{APIKey: "x1"}},
-		AmpCode:                      config.AmpCode{UpstreamAPIKey: "keep", RestrictManagementToLocalhost: false},
-		RemoteManagement:             config.RemoteManagement{DisableControlPanel: false, PanelGitHubRepository: "old/repo", SecretKey: "keep"},
+	oldCfg := &config.Config{
+		Port:                   1000,
+		AuthDir:                "/old",
+		Debug:                  false,
+		LoggingToFile:          false,
+		UsageStatisticsEnabled: false,
+		DisableCooling:         false,
+		RequestRetry:           1,
+		MaxRetryInterval:       1,
+		WebsocketAuth:          false,
+		QuotaExceeded:          config.QuotaExceeded{SwitchProject: false, SwitchPreviewModel: false},
+		ClaudeKey:              []config.ClaudeKey{{APIKey: "c1"}},
+		CodexKey:               []config.CodexKey{{APIKey: "x1"}},
+		AmpCode:                config.AmpCode{UpstreamAPIKey: "keep", RestrictManagementToLocalhost: false},
+		RemoteManagement:       config.RemoteManagement{DisableControlPanel: false, PanelGitHubRepository: "old/repo", SecretKey: "keep"},
 		SDKConfig: sdkconfig.SDKConfig{
 			RequestLog:                 false,
 			ProxyURL:                   "http://old-proxy",
@@ -238,17 +238,17 @@ func TestBuildConfigChangeDetails_FlagsAndKeys(t *testing.T) {
 			NonStreamKeepAliveInterval: 0,
 		},
 	}
-		newCfg := &config.Config{
-			Port:                         2000,
-			AuthDir:                      "/new",
-			Debug:                        true,
-			LoggingToFile:                true,
-			UsageStatisticsEnabled:       true,
-			DisableCooling:               true,
-			RequestRetry:                 2,
-			MaxRetryInterval:             3,
-			WebsocketAuth:                true,
-		QuotaExceeded:                config.QuotaExceeded{SwitchProject: true, SwitchPreviewModel: true},
+	newCfg := &config.Config{
+		Port:                   2000,
+		AuthDir:                "/new",
+		Debug:                  true,
+		LoggingToFile:          true,
+		UsageStatisticsEnabled: true,
+		DisableCooling:         true,
+		RequestRetry:           2,
+		MaxRetryInterval:       3,
+		WebsocketAuth:          true,
+		QuotaExceeded:          config.QuotaExceeded{SwitchProject: true, SwitchPreviewModel: true},
 		ClaudeKey: []config.ClaudeKey{
 			{APIKey: "c1", BaseURL: "http://new", ProxyURL: "http://p", Headers: map[string]string{"H": "1"}, ExcludedModels: []string{"a"}},
 			{APIKey: "c2"},
@@ -269,7 +269,6 @@ func TestBuildConfigChangeDetails_FlagsAndKeys(t *testing.T) {
 		},
 		SDKConfig: sdkconfig.SDKConfig{
 			RequestLog:                 true,
-			RequestLogRedactDetails:    true,
 			ProxyURL:                   "http://new-proxy",
 			APIKeys:                    []string{" key-1 ", "key-2"},
 			ForceModelPrefix:           true,
@@ -278,12 +277,11 @@ func TestBuildConfigChangeDetails_FlagsAndKeys(t *testing.T) {
 	}
 
 	details := BuildConfigChangeDetails(oldCfg, newCfg)
-		expectContains(t, details, "debug: false -> true")
-		expectContains(t, details, "logging-to-file: false -> true")
-		expectContains(t, details, "usage-statistics-enabled: false -> true")
-		expectContains(t, details, "disable-cooling: false -> true")
-		expectContains(t, details, "request-log: false -> true")
-		expectContains(t, details, "request-log-redact-details: false -> true")
+	expectContains(t, details, "debug: false -> true")
+	expectContains(t, details, "logging-to-file: false -> true")
+	expectContains(t, details, "usage-statistics-enabled: false -> true")
+	expectContains(t, details, "disable-cooling: false -> true")
+	expectContains(t, details, "request-log: false -> true")
 	expectContains(t, details, "request-retry: 1 -> 2")
 	expectContains(t, details, "max-retry-interval: 1 -> 3")
 	expectContains(t, details, "proxy-url: http://old-proxy -> http://new-proxy")
@@ -303,17 +301,17 @@ func TestBuildConfigChangeDetails_FlagsAndKeys(t *testing.T) {
 }
 
 func TestBuildConfigChangeDetails_AllBranches(t *testing.T) {
-		oldCfg := &config.Config{
-			Port:                         1,
-			AuthDir:                      "/a",
-			Debug:                        false,
-			LoggingToFile:                false,
-			UsageStatisticsEnabled:       false,
-			DisableCooling:               false,
-			RequestRetry:                 1,
-			MaxRetryInterval:             1,
-			WebsocketAuth:                false,
-		QuotaExceeded:                config.QuotaExceeded{SwitchProject: false, SwitchPreviewModel: false},
+	oldCfg := &config.Config{
+		Port:                   1,
+		AuthDir:                "/a",
+		Debug:                  false,
+		LoggingToFile:          false,
+		UsageStatisticsEnabled: false,
+		DisableCooling:         false,
+		RequestRetry:           1,
+		MaxRetryInterval:       1,
+		WebsocketAuth:          false,
+		QuotaExceeded:          config.QuotaExceeded{SwitchProject: false, SwitchPreviewModel: false},
 		GeminiKey: []config.GeminiKey{
 			{APIKey: "g-old", BaseURL: "http://g-old", ProxyURL: "http://gp-old", Headers: map[string]string{"A": "1"}},
 		},
@@ -355,17 +353,17 @@ func TestBuildConfigChangeDetails_AllBranches(t *testing.T) {
 			},
 		},
 	}
-		newCfg := &config.Config{
-			Port:                         2,
-			AuthDir:                      "/b",
-			Debug:                        true,
-			LoggingToFile:                true,
-			UsageStatisticsEnabled:       true,
-			DisableCooling:               true,
-			RequestRetry:                 2,
-			MaxRetryInterval:             3,
-			WebsocketAuth:                true,
-		QuotaExceeded:                config.QuotaExceeded{SwitchProject: true, SwitchPreviewModel: true},
+	newCfg := &config.Config{
+		Port:                   2,
+		AuthDir:                "/b",
+		Debug:                  true,
+		LoggingToFile:          true,
+		UsageStatisticsEnabled: true,
+		DisableCooling:         true,
+		RequestRetry:           2,
+		MaxRetryInterval:       3,
+		WebsocketAuth:          true,
+		QuotaExceeded:          config.QuotaExceeded{SwitchProject: true, SwitchPreviewModel: true},
 		GeminiKey: []config.GeminiKey{
 			{APIKey: "g-new", BaseURL: "http://g-new", ProxyURL: "http://gp-new", Headers: map[string]string{"A": "2"}, ExcludedModels: []string{"x", "y"}},
 		},
@@ -416,12 +414,12 @@ func TestBuildConfigChangeDetails_AllBranches(t *testing.T) {
 	changes := BuildConfigChangeDetails(oldCfg, newCfg)
 	expectContains(t, changes, "port: 1 -> 2")
 	expectContains(t, changes, "auth-dir: /a -> /b")
-		expectContains(t, changes, "debug: false -> true")
-		expectContains(t, changes, "logging-to-file: false -> true")
-		expectContains(t, changes, "usage-statistics-enabled: false -> true")
-		expectContains(t, changes, "disable-cooling: false -> true")
-		expectContains(t, changes, "request-retry: 1 -> 2")
-		expectContains(t, changes, "max-retry-interval: 1 -> 3")
+	expectContains(t, changes, "debug: false -> true")
+	expectContains(t, changes, "logging-to-file: false -> true")
+	expectContains(t, changes, "usage-statistics-enabled: false -> true")
+	expectContains(t, changes, "disable-cooling: false -> true")
+	expectContains(t, changes, "request-retry: 1 -> 2")
+	expectContains(t, changes, "max-retry-interval: 1 -> 3")
 	expectContains(t, changes, "proxy-url: http://old-proxy -> http://new-proxy")
 	expectContains(t, changes, "ws-auth: false -> true")
 	expectContains(t, changes, "quota-exceeded.switch-project: false -> true")

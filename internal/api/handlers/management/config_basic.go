@@ -190,13 +190,13 @@ func (h *Handler) PutDebug(c *gin.Context) { h.updateBoolField(c, func(v bool) {
 func (h *Handler) GetUsageStatisticsEnabled(c *gin.Context) {
 	c.JSON(200, gin.H{"usage-statistics-enabled": h.cfg.UsageStatisticsEnabled})
 }
-	func (h *Handler) PutUsageStatisticsEnabled(c *gin.Context) {
-		h.updateBoolField(c, func(v bool) { h.cfg.UsageStatisticsEnabled = v })
-	}
+func (h *Handler) PutUsageStatisticsEnabled(c *gin.Context) {
+	h.updateBoolField(c, func(v bool) { h.cfg.UsageStatisticsEnabled = v })
+}
 
-	// LoggingToFile
-	func (h *Handler) GetLoggingToFile(c *gin.Context) {
-		c.JSON(200, gin.H{"logging-to-file": h.cfg.LoggingToFile})
+// UsageStatisticsEnabled
+func (h *Handler) GetLoggingToFile(c *gin.Context) {
+	c.JSON(200, gin.H{"logging-to-file": h.cfg.LoggingToFile})
 }
 func (h *Handler) PutLoggingToFile(c *gin.Context) {
 	h.updateBoolField(c, func(v bool) { h.cfg.LoggingToFile = v })
@@ -226,14 +226,6 @@ func (h *Handler) PutLogsMaxTotalSizeMB(c *gin.Context) {
 func (h *Handler) GetRequestLog(c *gin.Context) { c.JSON(200, gin.H{"request-log": h.cfg.RequestLog}) }
 func (h *Handler) PutRequestLog(c *gin.Context) {
 	h.updateBoolField(c, func(v bool) { h.cfg.RequestLog = v })
-}
-
-// Request log redaction
-func (h *Handler) GetRequestLogRedactDetails(c *gin.Context) {
-	c.JSON(200, gin.H{"request-log-redact-details": h.cfg.RequestLogRedactDetails})
-}
-func (h *Handler) PutRequestLogRedactDetails(c *gin.Context) {
-	h.updateBoolField(c, func(v bool) { h.cfg.RequestLogRedactDetails = v })
 }
 
 // Websocket auth

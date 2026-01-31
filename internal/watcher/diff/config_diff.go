@@ -39,9 +39,6 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 	if oldCfg.RequestLog != newCfg.RequestLog {
 		changes = append(changes, fmt.Sprintf("request-log: %t -> %t", oldCfg.RequestLog, newCfg.RequestLog))
 	}
-	if oldCfg.RequestLogRedactDetails != newCfg.RequestLogRedactDetails {
-		changes = append(changes, fmt.Sprintf("request-log-redact-details: %t -> %t", oldCfg.RequestLogRedactDetails, newCfg.RequestLogRedactDetails))
-	}
 	if oldCfg.RequestRetry != newCfg.RequestRetry {
 		changes = append(changes, fmt.Sprintf("request-retry: %d -> %d", oldCfg.RequestRetry, newCfg.RequestRetry))
 	}

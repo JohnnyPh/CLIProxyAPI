@@ -60,13 +60,9 @@ type ServerOption func(*serverOptionConfig)
 func defaultRequestLoggerFactory(cfg *config.Config, configPath string) logging.RequestLogger {
 	configDir := filepath.Dir(configPath)
 	if base := util.WritablePath(); base != "" {
-		logger := logging.NewFileRequestLogger(cfg.RequestLog, filepath.Join(base, "logs"), configDir)
-		logger.SetRedactDetails(cfg.RequestLogRedactDetails)
-		return logger
+		return logging.NewFileRequestLogger(cfg.RequestLog, filepath.Join(base, "logs"), configDir)
 	}
-	logger := logging.NewFileRequestLogger(cfg.RequestLog, "logs", configDir)
-	logger.SetRedactDetails(cfg.RequestLogRedactDetails)
-	return logger
+	return logging.NewFileRequestLogger(cfg.RequestLog, "logs", configDir)
 }
 
 // WithMiddleware appends additional Gin middleware during server construction.
@@ -501,9 +497,9 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.PUT("/logs-max-total-size-mb", s.mgmt.PutLogsMaxTotalSizeMB)
 		mgmt.PATCH("/logs-max-total-size-mb", s.mgmt.PutLogsMaxTotalSizeMB)
 
-			mgmt.GET("/usage-statistics-enabled", s.mgmt.GetUsageStatisticsEnabled)
-			mgmt.PUT("/usage-statistics-enabled", s.mgmt.PutUsageStatisticsEnabled)
-			mgmt.PATCH("/usage-statistics-enabled", s.mgmt.PutUsageStatisticsEnabled)
+		mgmt.GET("/usage-statistics-enabled", s.mgmt.GetUsageStatisticsEnabled)
+		mgmt.PUT("/usage-statistics-enabled", s.mgmt.PutUsageStatisticsEnabled)
+		mgmt.PATCH("/usage-statistics-enabled", s.mgmt.PutUsageStatisticsEnabled)
 
 		mgmt.GET("/proxy-url", s.mgmt.GetProxyURL)
 		mgmt.PUT("/proxy-url", s.mgmt.PutProxyURL)
@@ -538,9 +534,6 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/request-log", s.mgmt.GetRequestLog)
 		mgmt.PUT("/request-log", s.mgmt.PutRequestLog)
 		mgmt.PATCH("/request-log", s.mgmt.PutRequestLog)
-		mgmt.GET("/request-log-redact-details", s.mgmt.GetRequestLogRedactDetails)
-		mgmt.PUT("/request-log-redact-details", s.mgmt.PutRequestLogRedactDetails)
-		mgmt.PATCH("/request-log-redact-details", s.mgmt.PutRequestLogRedactDetails)
 		mgmt.GET("/ws-auth", s.mgmt.GetWebsocketAuth)
 		mgmt.PUT("/ws-auth", s.mgmt.PutWebsocketAuth)
 		mgmt.PATCH("/ws-auth", s.mgmt.PutWebsocketAuth)
@@ -887,20 +880,6 @@ func (s *Server) UpdateClients(cfg *config.Config) {
 			log.Debugf("request logging toggled to %t", cfg.RequestLog)
 		}
 	}
-	previousRequestLogRedact := false
-	if oldCfg != nil {
-		previousRequestLogRedact = oldCfg.RequestLogRedactDetails
-	}
-	if s.requestLogger != nil && (oldCfg == nil || previousRequestLogRedact != cfg.RequestLogRedactDetails) {
-		if toggler, ok := s.requestLogger.(interface{ SetRedactDetails(bool) }); ok {
-			toggler.SetRedactDetails(cfg.RequestLogRedactDetails)
-		}
-		if oldCfg != nil {
-			log.Debugf("request_log_redact_details updated from %t to %t", previousRequestLogRedact, cfg.RequestLogRedactDetails)
-		} else {
-			log.Debugf("request_log_redact_details toggled to %t", cfg.RequestLogRedactDetails)
-		}
-	}
 
 	if oldCfg == nil || oldCfg.LoggingToFile != cfg.LoggingToFile || oldCfg.LogsMaxTotalSizeMB != cfg.LogsMaxTotalSizeMB {
 		if err := logging.ConfigureLogOutput(cfg); err != nil {
@@ -919,18 +898,18 @@ func (s *Server) UpdateClients(cfg *config.Config) {
 		}
 	}
 
-		if oldCfg == nil || oldCfg.UsageStatisticsEnabled != cfg.UsageStatisticsEnabled {
-			usage.SetStatisticsEnabled(cfg.UsageStatisticsEnabled)
-			if oldCfg != nil {
-				log.Debugf("usage_statistics_enabled updated from %t to %t", oldCfg.UsageStatisticsEnabled, cfg.UsageStatisticsEnabled)
+	if oldCfg == nil || oldCfg.UsageStatisticsEnabled != cfg.UsageStatisticsEnabled {
+		usage.SetStatisticsEnabled(cfg.UsageStatisticsEnabled)
+		if oldCfg != nil {
+			log.Debugf("usage_statistics_enabled updated from %t to %t", oldCfg.UsageStatisticsEnabled, cfg.UsageStatisticsEnabled)
 		} else {
 			log.Debugf("usage_statistics_enabled toggled to %t", cfg.UsageStatisticsEnabled)
-			}
 		}
+	}
 
-		if oldCfg == nil || oldCfg.DisableCooling != cfg.DisableCooling {
-			auth.SetQuotaCooldownDisabled(cfg.DisableCooling)
-			if oldCfg != nil {
+	if oldCfg == nil || oldCfg.DisableCooling != cfg.DisableCooling {
+		auth.SetQuotaCooldownDisabled(cfg.DisableCooling)
+		if oldCfg != nil {
 			log.Debugf("disable_cooling updated from %t to %t", oldCfg.DisableCooling, cfg.DisableCooling)
 		} else {
 			log.Debugf("disable_cooling toggled to %t", cfg.DisableCooling)

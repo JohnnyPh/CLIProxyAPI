@@ -132,9 +132,6 @@ type FileRequestLogger struct {
 
 	// logsDir is the directory where log files are stored.
 	logsDir string
-
-	// redactDetails masks sensitive request payloads when true.
-	redactDetails bool
 }
 
 // NewFileRequestLogger creates a new file-based request logger.
@@ -176,11 +173,6 @@ func (l *FileRequestLogger) IsEnabled() bool {
 //   - enabled: Whether request logging should be enabled
 func (l *FileRequestLogger) SetEnabled(enabled bool) {
 	l.enabled = enabled
-}
-
-// SetRedactDetails updates whether sensitive request details should be masked in logs.
-func (l *FileRequestLogger) SetRedactDetails(redact bool) {
-	l.redactDetails = redact
 }
 
 // LogRequest logs a complete non-streaming request/response cycle to a file.
@@ -228,8 +220,7 @@ func (l *FileRequestLogger) logRequest(url, method string, requestHeaders map[st
 	}
 	filePath := filepath.Join(l.logsDir, filename)
 
-	requestBody := l.maybeRedactBody(body, requestHeaders)
-	requestBodyPath, errTemp := l.writeRequestBodyTempFile(requestBody)
+	requestBodyPath, errTemp := l.writeRequestBodyTempFile(body)
 	if errTemp != nil {
 		log.WithError(errTemp).Warn("failed to create request body temp file, falling back to direct write")
 	}
@@ -257,7 +248,7 @@ func (l *FileRequestLogger) logRequest(url, method string, requestHeaders map[st
 		url,
 		method,
 		requestHeaders,
-		requestBody,
+		body,
 		requestBodyPath,
 		apiRequest,
 		apiResponse,
@@ -321,8 +312,7 @@ func (l *FileRequestLogger) LogStreamingRequest(url, method string, headers map[
 		requestHeaders[key] = headerValues
 	}
 
-	requestBody := l.maybeRedactBody(body, headers)
-	requestBodyPath, errTemp := l.writeRequestBodyTempFile(requestBody)
+	requestBodyPath, errTemp := l.writeRequestBodyTempFile(body)
 	if errTemp != nil {
 		return nil, fmt.Errorf("failed to create request body temp file: %w", errTemp)
 	}
@@ -441,13 +431,6 @@ func (l *FileRequestLogger) sanitizeForFilename(path string) string {
 	}
 
 	return sanitized
-}
-
-func (l *FileRequestLogger) maybeRedactBody(body []byte, headers map[string][]string) []byte {
-	if !l.redactDetails {
-		return body
-	}
-	return util.RedactSensitiveBody(body, headers)
 }
 
 // cleanupOldErrorLogs keeps only the newest 10 forced error log files.

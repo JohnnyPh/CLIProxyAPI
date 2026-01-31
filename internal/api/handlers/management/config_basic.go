@@ -190,21 +190,13 @@ func (h *Handler) PutDebug(c *gin.Context) { h.updateBoolField(c, func(v bool) {
 func (h *Handler) GetUsageStatisticsEnabled(c *gin.Context) {
 	c.JSON(200, gin.H{"usage-statistics-enabled": h.cfg.UsageStatisticsEnabled})
 }
-func (h *Handler) PutUsageStatisticsEnabled(c *gin.Context) {
-	h.updateBoolField(c, func(v bool) { h.cfg.UsageStatisticsEnabled = v })
-}
+	func (h *Handler) PutUsageStatisticsEnabled(c *gin.Context) {
+		h.updateBoolField(c, func(v bool) { h.cfg.UsageStatisticsEnabled = v })
+	}
 
-// UsageStatisticsRedactDetails
-func (h *Handler) GetUsageStatisticsRedactDetails(c *gin.Context) {
-	c.JSON(200, gin.H{"usage-statistics-redact-details": h.cfg.UsageStatisticsRedactDetails})
-}
-func (h *Handler) PutUsageStatisticsRedactDetails(c *gin.Context) {
-	h.updateBoolField(c, func(v bool) { h.cfg.UsageStatisticsRedactDetails = v })
-}
-
-// LoggingToFile
-func (h *Handler) GetLoggingToFile(c *gin.Context) {
-	c.JSON(200, gin.H{"logging-to-file": h.cfg.LoggingToFile})
+	// LoggingToFile
+	func (h *Handler) GetLoggingToFile(c *gin.Context) {
+		c.JSON(200, gin.H{"logging-to-file": h.cfg.LoggingToFile})
 }
 func (h *Handler) PutLoggingToFile(c *gin.Context) {
 	h.updateBoolField(c, func(v bool) { h.cfg.LoggingToFile = v })

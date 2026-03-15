@@ -5,7 +5,12 @@ package usage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
+	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,9 +22,34 @@ import (
 
 var statisticsEnabled atomic.Bool
 
+const (
+	statsFileName     = "usage_stats.json"
+	maxRequestDetails = 500
+	saveInterval      = time.Minute
+	loadSaveFilePerm  = 0o600
+)
+
 func init() {
 	statisticsEnabled.Store(true)
 	coreusage.RegisterPlugin(NewLoggerPlugin())
+
+	if err := defaultRequestStatistics.Load(statsFileName); err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("usage stats: failed to load %s: %v", statsFileName, err)
+		}
+	} else {
+		log.Printf("usage stats: loaded from %s", statsFileName)
+	}
+
+	go func() {
+		ticker := time.NewTicker(saveInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := defaultRequestStatistics.Save(statsFileName); err != nil {
+				log.Printf("usage stats: failed to save %s: %v", statsFileName, err)
+			}
+		}
+	}()
 }
 
 // LoggerPlugin collects in-memory request statistics for usage analysis.
@@ -67,10 +97,12 @@ type RequestStatistics struct {
 
 	apis map[string]*apiStats
 
-	requestsByDay  map[string]int64
-	requestsByHour map[int]int64
-	tokensByDay    map[string]int64
-	tokensByHour   map[int]int64
+	requestsByDay    map[string]int64
+	requestsByHour   map[int]int64
+	requestsByMinute map[string]int64
+	tokensByDay      map[string]int64
+	tokensByHour     map[int]int64
+	tokensByMinute   map[string]int64
 }
 
 // apiStats holds aggregated metrics for a single API key.
@@ -114,10 +146,12 @@ type StatisticsSnapshot struct {
 
 	APIs map[string]APISnapshot `json:"apis"`
 
-	RequestsByDay  map[string]int64 `json:"requests_by_day"`
-	RequestsByHour map[string]int64 `json:"requests_by_hour"`
-	TokensByDay    map[string]int64 `json:"tokens_by_day"`
-	TokensByHour   map[string]int64 `json:"tokens_by_hour"`
+	RequestsByDay    map[string]int64 `json:"requests_by_day"`
+	RequestsByHour   map[string]int64 `json:"requests_by_hour"`
+	RequestsByMinute map[string]int64 `json:"requests_by_minute"`
+	TokensByDay      map[string]int64 `json:"tokens_by_day"`
+	TokensByHour     map[string]int64 `json:"tokens_by_hour"`
+	TokensByMinute   map[string]int64 `json:"tokens_by_minute"`
 }
 
 // APISnapshot summarises metrics for a single API key.
@@ -142,11 +176,13 @@ func GetRequestStatistics() *RequestStatistics { return defaultRequestStatistics
 // NewRequestStatistics constructs an empty statistics store.
 func NewRequestStatistics() *RequestStatistics {
 	return &RequestStatistics{
-		apis:           make(map[string]*apiStats),
-		requestsByDay:  make(map[string]int64),
-		requestsByHour: make(map[int]int64),
-		tokensByDay:    make(map[string]int64),
-		tokensByHour:   make(map[int]int64),
+		apis:             make(map[string]*apiStats),
+		requestsByDay:    make(map[string]int64),
+		requestsByHour:   make(map[int]int64),
+		requestsByMinute: make(map[string]int64),
+		tokensByDay:      make(map[string]int64),
+		tokensByHour:     make(map[int]int64),
+		tokensByMinute:   make(map[string]int64),
 	}
 }
 
@@ -164,10 +200,7 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 	}
 	detail := normaliseDetail(record.Detail)
 	totalTokens := detail.TotalTokens
-	statsKey := record.APIKey
-	if statsKey == "" {
-		statsKey = resolveAPIIdentifier(ctx, record)
-	}
+	statsKey := resolveStatisticsKey(ctx, record)
 	failed := record.Failed
 	if !failed {
 		failed = !resolveSuccess(ctx)
@@ -179,6 +212,7 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 	}
 	dayKey := timestamp.Format("2006-01-02")
 	hourKey := timestamp.Hour()
+	minuteKey := timestamp.Format("2006-01-02 15:04")
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -196,18 +230,21 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 		stats = &apiStats{Models: make(map[string]*modelStats)}
 		s.apis[statsKey] = stats
 	}
-	s.updateAPIStats(stats, modelName, RequestDetail{
+	requestDetail := RequestDetail{
 		Timestamp: timestamp,
 		Source:    record.Source,
 		AuthIndex: record.AuthIndex,
 		Tokens:    detail,
 		Failed:    failed,
-	})
+	}
+	s.updateAPIStats(stats, modelName, requestDetail)
 
 	s.requestsByDay[dayKey]++
 	s.requestsByHour[hourKey]++
+	s.requestsByMinute[minuteKey]++
 	s.tokensByDay[dayKey] += totalTokens
 	s.tokensByHour[hourKey] += totalTokens
+	s.tokensByMinute[minuteKey] += totalTokens
 }
 
 func (s *RequestStatistics) updateAPIStats(stats *apiStats, model string, detail RequestDetail) {
@@ -267,6 +304,10 @@ func (s *RequestStatistics) Snapshot() StatisticsSnapshot {
 		key := formatHour(hour)
 		result.RequestsByHour[key] = v
 	}
+	result.RequestsByMinute = make(map[string]int64, len(s.requestsByMinute))
+	for k, v := range s.requestsByMinute {
+		result.RequestsByMinute[k] = v
+	}
 
 	result.TokensByDay = make(map[string]int64, len(s.tokensByDay))
 	for k, v := range s.tokensByDay {
@@ -277,6 +318,10 @@ func (s *RequestStatistics) Snapshot() StatisticsSnapshot {
 	for hour, v := range s.tokensByHour {
 		key := formatHour(hour)
 		result.TokensByHour[key] = v
+	}
+	result.TokensByMinute = make(map[string]int64, len(s.tokensByMinute))
+	for k, v := range s.tokensByMinute {
+		result.TokensByMinute[k] = v
 	}
 
 	return result
@@ -368,11 +413,124 @@ func (s *RequestStatistics) recordImported(apiName, modelName string, stats *api
 
 	dayKey := detail.Timestamp.Format("2006-01-02")
 	hourKey := detail.Timestamp.Hour()
+	minuteKey := detail.Timestamp.Format("2006-01-02 15:04")
 
 	s.requestsByDay[dayKey]++
 	s.requestsByHour[hourKey]++
+	s.requestsByMinute[minuteKey]++
 	s.tokensByDay[dayKey] += totalTokens
 	s.tokensByHour[hourKey] += totalTokens
+	s.tokensByMinute[minuteKey] += totalTokens
+}
+
+// Save writes the current statistics to a JSON file.
+func (s *RequestStatistics) Save(filename string) error {
+	snapshot := s.Snapshot()
+
+	for apiKey, apiSnap := range snapshot.APIs {
+		for modelName, modelSnap := range apiSnap.Models {
+			modelSnap.Details = trimRequestDetails(modelSnap.Details)
+			apiSnap.Models[modelName] = modelSnap
+		}
+		snapshot.APIs[apiKey] = apiSnap
+	}
+
+	data, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filename, data, loadSaveFilePerm)
+}
+
+// Load reads statistics from a JSON file and restores the state.
+func (s *RequestStatistics) Load(filename string) error {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return err
+	}
+	var snapshot StatisticsSnapshot
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return err
+	}
+	s.Restore(snapshot)
+	return nil
+}
+
+// Restore populates the RequestStatistics from a snapshot.
+func (s *RequestStatistics) Restore(snapshot StatisticsSnapshot) {
+	if s == nil {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.totalRequests = snapshot.TotalRequests
+	s.successCount = snapshot.SuccessCount
+	s.failureCount = snapshot.FailureCount
+	s.totalTokens = snapshot.TotalTokens
+
+	if s.apis == nil {
+		s.apis = make(map[string]*apiStats)
+	}
+	for apiName, apiSnap := range snapshot.APIs {
+		stats := &apiStats{
+			TotalRequests: apiSnap.TotalRequests,
+			TotalTokens:   apiSnap.TotalTokens,
+			Models:        make(map[string]*modelStats),
+		}
+		for modelName, modelSnap := range apiSnap.Models {
+			details := make([]RequestDetail, len(modelSnap.Details))
+			copy(details, modelSnap.Details)
+			stats.Models[modelName] = &modelStats{
+				TotalRequests: modelSnap.TotalRequests,
+				TotalTokens:   modelSnap.TotalTokens,
+				Details:       details,
+			}
+		}
+		s.apis[apiName] = stats
+	}
+
+	if s.requestsByDay == nil {
+		s.requestsByDay = make(map[string]int64)
+	}
+	for k, v := range snapshot.RequestsByDay {
+		s.requestsByDay[k] = v
+	}
+	if s.requestsByHour == nil {
+		s.requestsByHour = make(map[int]int64)
+	}
+	for k, v := range snapshot.RequestsByHour {
+		if h, err := strconv.Atoi(k); err == nil {
+			s.requestsByHour[h] = v
+		}
+	}
+	if s.requestsByMinute == nil {
+		s.requestsByMinute = make(map[string]int64)
+	}
+	for k, v := range snapshot.RequestsByMinute {
+		s.requestsByMinute[k] = v
+	}
+	if s.tokensByDay == nil {
+		s.tokensByDay = make(map[string]int64)
+	}
+	for k, v := range snapshot.TokensByDay {
+		s.tokensByDay[k] = v
+	}
+	if s.tokensByHour == nil {
+		s.tokensByHour = make(map[int]int64)
+	}
+	for k, v := range snapshot.TokensByHour {
+		if h, err := strconv.Atoi(k); err == nil {
+			s.tokensByHour[h] = v
+		}
+	}
+	if s.tokensByMinute == nil {
+		s.tokensByMinute = make(map[string]int64)
+	}
+	for k, v := range snapshot.TokensByMinute {
+		s.tokensByMinute[k] = v
+	}
 }
 
 func dedupKey(apiName, modelName string, detail RequestDetail) string {
@@ -419,6 +577,13 @@ func resolveAPIIdentifier(ctx context.Context, record coreusage.Record) string {
 	return "unknown"
 }
 
+func resolveStatisticsKey(ctx context.Context, record coreusage.Record) string {
+	if record.APIKey != "" {
+		return record.APIKey
+	}
+	return resolveAPIIdentifier(ctx, record)
+}
+
 func resolveSuccess(ctx context.Context) bool {
 	if ctx == nil {
 		return true
@@ -461,6 +626,19 @@ func normaliseTokenStats(tokens TokenStats) TokenStats {
 		tokens.TotalTokens = tokens.InputTokens + tokens.OutputTokens + tokens.ReasoningTokens + tokens.CachedTokens
 	}
 	return tokens
+}
+
+func trimRequestDetails(details []RequestDetail) []RequestDetail {
+	if len(details) <= maxRequestDetails {
+		return details
+	}
+	sort.Slice(details, func(i, j int) bool {
+		return details[i].Timestamp.Before(details[j].Timestamp)
+	})
+	start := len(details) - maxRequestDetails
+	trimmed := make([]RequestDetail, maxRequestDetails)
+	copy(trimmed, details[start:])
+	return trimmed
 }
 
 func formatHour(hour int) string {

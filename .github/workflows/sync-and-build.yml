@@ -111,7 +111,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          platforms: linux/amd64
+          platforms: linux/amd64, linux/arm64/v8
           push: true
           cache-from: type=gha,scope=cli-proxy-api
           cache-to: type=gha,mode=min,scope=cli-proxy-api,ignore-error=true

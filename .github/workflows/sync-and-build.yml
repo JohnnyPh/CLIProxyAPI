@@ -3,40 +3,68 @@ on:
   schedule:
     - cron: '0 0 * * *'
   workflow_dispatch:
+    inputs:
+      build:
+        description: Build and push Docker image after syncing
+        required: false
+        type: boolean
+        default: true
+      update_unraid:
+        description: Trigger Unraid container update after Docker push
+        required: false
+        type: boolean
+        default: true
 concurrency:
-  group: sync-and-build-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 permissions:
-  contents: write
-  actions: write
+  contents: read
 jobs:
   sync-and-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
     env:
       DOCKER_BUILD_RECORD_UPLOAD: false
     outputs:
       build_required: ${{ steps.decision.outputs.build_required }}
     steps:
       - name: Checkout target repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
           token: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
 
       - name: Configure Git
+        shell: bash
         run: |
-          git config --global user.name 'JohnnyPh'
-          git config --global user.email '28253406+JohnnyPh@users.noreply.github.com'
+          set -euo pipefail
+          git config user.name 'JohnnyPh'
+          git config user.email '28253406+JohnnyPh@users.noreply.github.com'
 
       - name: Sync with Upstream
         id: sync
         env:
           UPSTREAM_SYNC_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+        shell: bash
         run: |
+          set -euo pipefail
           git remote add upstream https://github.com/router-for-me/CLIProxyAPI.git || git remote set-url upstream https://github.com/router-for-me/CLIProxyAPI.git
-          git fetch upstream --tags
-          CURRENT_BRANCH=$(git branch --show-current)
+          git fetch --prune upstream +refs/heads/main:refs/remotes/upstream/main --tags
+          CURRENT_BRANCH="${GITHUB_REF_NAME:-}"
+          if [ -z "$CURRENT_BRANCH" ]; then
+            CURRENT_BRANCH=$(git branch --show-current)
+          fi
+          if [ -z "$CURRENT_BRANCH" ]; then
+            echo "Unable to determine current branch."
+            exit 1
+          fi
+          if [ "${GITHUB_REF_TYPE:-branch}" != "branch" ]; then
+            echo "This workflow must run on a branch ref, got ${GITHUB_REF_TYPE:-unknown}."
+            exit 1
+          fi
           echo "Current branch: $CURRENT_BRANCH"
 
           if [ "$(git rev-parse HEAD)" = "$(git rev-parse upstream/main)" ]; then
@@ -52,7 +80,32 @@ jobs:
           fi
 
           echo "Updates detected. Merging upstream..."
-          git merge --no-ff --no-commit upstream/main
+          if ! git merge --no-ff --no-commit upstream/main; then
+            mapfile -t conflicts < <(git diff --name-only --diff-filter=U)
+            printf 'Merge conflicts:\n'
+            printf ' - %s\n' "${conflicts[@]}"
+
+            if [ -n "${UPSTREAM_SYNC_TOKEN:-}" ]; then
+              echo "Merge conflicts require manual resolution."
+              exit 1
+            fi
+
+            non_workflow_conflicts=0
+            for conflict in "${conflicts[@]}"; do
+              case "$conflict" in
+                .github/workflows/*) ;;
+                *) non_workflow_conflicts=1 ;;
+              esac
+            done
+            if [ "$non_workflow_conflicts" -ne 0 ]; then
+              echo "Non-workflow conflicts require manual resolution."
+              exit 1
+            fi
+
+            echo "Only workflow files conflicted and no UPSTREAM_SYNC_TOKEN is configured; retrying merge so workflow updates can be skipped."
+            git merge --abort
+            git merge --no-ff --no-commit -X theirs upstream/main
+          fi
 
           # GitHub Actions' default token cannot update workflow files; avoid failing the sync.
           if [ -z "${UPSTREAM_SYNC_TOKEN:-}" ] && ! git diff --cached --quiet -- .github/workflows; then
@@ -68,13 +121,15 @@ jobs:
           fi
 
           git commit -m "Merge upstream/main"
-          git push origin "$CURRENT_BRANCH"
+          git push origin "HEAD:$CURRENT_BRANCH"
           echo "changes_detected=true" >> $GITHUB_OUTPUT
 
       - name: Decide whether to build
         id: decision
+        shell: bash
         run: |
-          if [ "${{ steps.sync.outputs.changes_detected }}" = "true" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          set -euo pipefail
+          if [ "${{ steps.sync.outputs.changes_detected }}" = "true" ] || { [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.build }}" = "true" ]; }; then
             echo "build_required=true" >> $GITHUB_OUTPUT
           else
             echo "build_required=false" >> $GITHUB_OUTPUT
@@ -83,6 +138,27 @@ jobs:
       - name: Skip build when nothing changed
         if: ${{ steps.decision.outputs.build_required != 'true' }}
         run: echo "No upstream changes detected; skipping Docker build."
+
+      - name: Validate Docker credentials
+        if: ${{ steps.decision.outputs.build_required == 'true' }}
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in DOCKER_USERNAME DOCKER_PASSWORD; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error title=Missing secret::$name is required to build and push the Docker image."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Set up QEMU
+        if: ${{ steps.decision.outputs.build_required == 'true' }}
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
         if: ${{ steps.decision.outputs.build_required == 'true' }}
@@ -98,7 +174,9 @@ jobs:
       - name: Prepare build args
         id: prep
         if: ${{ steps.decision.outputs.build_required == 'true' }}
+        shell: bash
         run: |
+          set -euo pipefail
           BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
           echo "date=$BUILD_DATE" >> $GITHUB_OUTPUT
           GIT_SHA=$(git rev-parse HEAD)
@@ -131,19 +209,39 @@ jobs:
     name: Update Unraid container
     needs: sync-and-build
     runs-on: ubuntu-latest
-    if: ${{ needs.sync-and-build.outputs.build_required == 'true' }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    if: ${{ needs.sync-and-build.outputs.build_required == 'true' && (github.event_name != 'workflow_dispatch' || inputs.update_unraid) }}
     steps:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
           node-version: 24.x
+          package-manager-cache: false
+
+      - name: Validate Unraid credentials
+        env:
+          UNRAID_USERNAME: ${{ secrets.UNRAID_USERNAME }}
+          UNRAID_PASSWORD: ${{ secrets.UNRAID_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in UNRAID_USERNAME UNRAID_PASSWORD; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error title=Missing secret::$name is required to update the Unraid container."
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       - name: Trigger Unraid Docker update
         env:
-          UNRAID_BASE_URL: https://unraid.3aa.uk
+          UNRAID_BASE_URL: ${{ vars.UNRAID_BASE_URL || 'https://unraid.3aa.uk' }}
           UNRAID_USERNAME: ${{ secrets.UNRAID_USERNAME }}
           UNRAID_PASSWORD: ${{ secrets.UNRAID_PASSWORD }}
-          UNRAID_CONTAINERS: CLIProxyAPI
+          UNRAID_CONTAINERS: ${{ vars.UNRAID_CONTAINERS || 'CLIProxyAPI' }}
         run: |
           node --input-type=module <<'NODE'
           const baseUrl = new URL(process.env.UNRAID_BASE_URL || "https://unraid.3aa.uk");
